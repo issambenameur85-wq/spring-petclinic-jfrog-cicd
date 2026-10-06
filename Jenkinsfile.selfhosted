@@ -71,5 +71,33 @@ pipeline {
                 sh 'docker build -t spring-petclinic:selfhosted .'
             }
         }
+
+        stage('Docker Push') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'jfrog-selfhosted-credentials',
+                        usernameVariable: 'ARTIFACTORY_USERNAME',
+                        passwordVariable: 'ARTIFACTORY_PASSWORD'
+                    ),
+                    string(
+                        credentialsId: 'jfrog-selfhosted-url',
+                        variable: 'ARTIFACTORY_URL'
+                    )
+                ]) {
+                    sh '''
+                        echo "$ARTIFACTORY_PASSWORD" | docker login "$ARTIFACTORY_URL" \
+                            -u "$ARTIFACTORY_USERNAME" \
+                            --password-stdin
+
+                        docker tag spring-petclinic:selfhosted \
+                            "$ARTIFACTORY_URL/docker-local/spring-petclinic:selfhosted"
+
+                        docker push \
+                            "$ARTIFACTORY_URL/docker-local/spring-petclinic:selfhosted"
+                    '''
+                }
+            }
+        }
     }
 }

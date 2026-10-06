@@ -14,7 +14,15 @@ pipeline {
 
         stage('Compile') {
             steps {
-                sh './mvnw compile'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'jfrog-credentials',
+                        usernameVariable: 'JFROG_USERNAME',
+                        passwordVariable: 'JFROG_TOKEN'
+                    )
+                ]) {
+                    sh './mvnw -s .mvn/jfrog-settings.xml compile'
+                }
             }
         }
 

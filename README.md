@@ -803,6 +803,12 @@ spring-petclinic-assignment.tar.gz
 
 The image archive is intentionally not stored in Git because it is a generated binary artifact.
 
+The final submitted archive was exported from `spring-petclinic:assignment` and has the following SHA-256 checksum:
+
+```text
+401f2c40fc07f48c647c9f07c375de178b0bdee85c12c4339b57dd66a2c18731
+```
+
 ## Export the Image
 
 The image can be exported with:
@@ -1047,11 +1053,7 @@ jfrog-selfhosted-url
 
 The Artifactory URL is injected at runtime instead of being hard-coded in `Jenkinsfile.selfhosted`. This keeps environment-specific configuration outside source control and avoids triggering Spring PetClinic's NoHttp Checkstyle rule for the local HTTP endpoint.
 
-For this local Docker Desktop environment, the injected URL is:
-
-```text
-http://host.docker.internal:8082
-```
+For this local Docker Desktop environment, Jenkins reaches Artifactory through `host.docker.internal` on port `8082`. The complete Artifactory endpoint is stored in the Jenkins `jfrog-selfhosted-url` credential and injected into the pipeline as `ARTIFACTORY_URL`.
 
 `host.docker.internal` is required because Jenkins runs inside a container; `localhost` inside that container would refer to Jenkins itself rather than the Artifactory service exposed by the host.
 
@@ -1061,7 +1063,7 @@ Connectivity from the Jenkins container to Artifactory was verified before execu
 
 ```text
 Downloading from jfrog-selfhosted:
-http://host.docker.internal:8082/artifactory/maven-virtual/...
+<self-hosted-artifactory>/artifactory/maven-virtual/...
 ```
 
 The complete self-hosted Jenkins pipeline was successfully executed:

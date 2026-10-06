@@ -1,16 +1,19 @@
-# Spring PetClinic – Jenkins, Docker & JFrog CI/CD
+# Spring PetClinic - Jenkins, Docker & JFrog CI/CD
 
 This repository contains a CI/CD implementation for the Spring PetClinic application using Jenkins, Maven, Docker, GitHub, and JFrog Artifactory.
 
-The pipeline:
+The primary pipeline:
 
 1. Checks out the source code from GitHub.
 2. Compiles the application.
 3. Runs the automated tests.
 4. Packages the Spring Boot application.
 5. Builds a runnable Docker image.
+6. Publishes the Docker image to JFrog Cloud Artifactory.
 
 All Maven dependency resolution performed by the CI pipeline is routed through JFrog Cloud Artifactory rather than directly to Maven Central.
+
+An additional self-hosted Artifactory implementation is included as a bonus. It demonstrates the same dependency resolution and Docker image publishing workflow using a locally deployed JFrog Artifactory OSS instance.
 
 The project is based on the official Spring PetClinic application:
 
@@ -19,6 +22,8 @@ https://github.com/spring-projects/spring-petclinic
 ---
 
 # CI/CD Architecture
+
+The primary CI pipeline uses JFrog Cloud for both Maven dependency resolution and Docker image storage.
 
 ```text
 GitHub
@@ -36,11 +41,19 @@ Jenkins
    |
    +--> Docker Build
    |
+   +--> Docker Push
+   |
    v
-Runnable Docker Image
+JFrog Cloud Artifactory
+   |
+   v
+docker-local
+   |
+   v
+spring-petclinic:assignment
 ```
 
-Maven dependency resolution follows this path:
+Maven dependency resolution follows a separate inbound path:
 
 ```text
 Jenkins
@@ -58,7 +71,20 @@ JFrog - maven-central-remote
 Maven Central
 ```
 
-JFrog Artifactory acts as the controlled repository layer between the build environment and the public Maven repository.
+JFrog Artifactory therefore performs two roles:
+
+```text
+                    JFrog Artifactory
+                    /              \
+                   /                \
+                  v                  ^
+          Maven Dependencies     Docker Image
+                  |                  |
+                  v                  |
+               Jenkins --------------+
+```
+
+JFrog acts as the controlled repository layer between the Maven build and public Maven repositories while also storing Docker images produced by the CI pipeline.
 
 ---
 
@@ -70,6 +96,7 @@ JFrog Artifactory acts as the controlled repository layer between the build envi
 - Jenkins
 - Docker
 - JFrog Artifactory
+- PostgreSQL
 - Git
 - GitHub
 
@@ -104,7 +131,7 @@ The root `Dockerfile` defines the Spring PetClinic runtime image.
 
 `.mvn/jfrog-settings.xml` configures Maven dependency resolution through JFrog Cloud Artifactory.
 
-`.mvn/jfrog-selfhosted-settings.xml` configures the separate self-hosted Artifactory bonus path.
+`.mvn/jfrog-selfhosted-settings.xml` configures Maven dependency resolution through the separate self-hosted Artifactory environment.
 
 `jenkins/Dockerfile` defines the custom Jenkins environment used for this assignment.
 
@@ -131,7 +158,7 @@ For this assignment, Jenkins runs locally inside a Docker container.
 
 Running Jenkins in Docker keeps the CI environment isolated and avoids requiring a native Jenkins installation on the host machine.
 
-A custom Jenkins image is used because the pipeline needs access to the Docker CLI to build the Spring PetClinic Docker image.
+A custom Jenkins image is used because the pipeline needs access to the Docker CLI to build and publish the Spring PetClinic Docker image.
 
 ## Jenkins Docker Image
 
@@ -169,6 +196,16 @@ A Docker volume is used to persist Jenkins configuration, plugins, jobs, and cre
 docker volume create jenkins_home
 ```
 
+The volume is mounted at Jenkins' data directory:
+
+```text
+Docker Volume                  Jenkins Container
+
+jenkins_home  ---------------> /var/jenkins_home
+```
+
+This allows Jenkins configuration to survive container recreation.
+
 ## Start Jenkins
 
 For this local assignment environment, Jenkins is started with access to the host Docker socket:
@@ -190,8 +227,6 @@ Jenkins is then available at:
 ```text
 http://localhost:8080
 ```
-
-The `jenkins_home` volume keeps Jenkins configuration persistent even if the Jenkins container is recreated.
 
 ---
 
@@ -219,10 +254,16 @@ Host Docker Engine
 Spring PetClinic Docker Image
 ```
 
-This enables the pipeline to execute:
+This enables the pipeline to execute Docker commands such as:
 
 ```bash
 docker build -t spring-petclinic:assignment .
+```
+
+and:
+
+```bash
+docker push <registry>/docker-local/spring-petclinic:assignment
 ```
 
 This configuration is intentionally limited to the local assignment environment. See the Security Considerations section for production considerations.
@@ -235,7 +276,7 @@ The Jenkins job uses **Pipeline script from SCM**.
 
 This allows Jenkins to retrieve both the application source code and the pipeline definition directly from GitHub.
 
-Create a Jenkins **Pipeline** job with:
+Create a Jenkins Pipeline job with:
 
 ```text
 Job name:    spring-petclinic-cicd
@@ -315,7 +356,7 @@ git@github.com:issambenameur85-wq/spring-petclinic-jfrog-cicd.git
 
 Jenkins only requires read access to the public repository.
 
-It therefore performs checkout over HTTPS:
+It performs checkout over HTTPS:
 
 ```text
 Jenkins
@@ -341,8 +382,6 @@ This keeps developer authentication separate from Jenkins source-code checkout.
 
 The `Jenkinsfile` defines the required JFrog Cloud CI pipeline.
 
-`Jenkinsfile.selfhosted` defines the optional self-hosted Artifactory bonus pipeline.
-
 The pipeline contains the following stages:
 
 ```text
@@ -359,6 +398,9 @@ Package
    |
    v
 Docker Build
+   |
+   v
+Docker Push
 ```
 
 ## 1. Checkout
@@ -375,13 +417,13 @@ stage('Checkout') {
 
 ## 2. Compile
 
-Compiles the application while resolving Maven dependencies through JFrog Artifactory:
+Compiles the application while resolving Maven dependencies through JFrog Cloud Artifactory:
 
 ```bash
 ./mvnw -s .mvn/jfrog-settings.xml compile
 ```
 
-Using the Maven Wrapper ensures the expected Maven version can be used without requiring Maven to be installed manually on the Jenkins environment.
+Using the Maven Wrapper ensures the expected Maven version can be used without requiring Maven to be installed manually in the Jenkins environment.
 
 ## 3. Test
 
@@ -391,9 +433,9 @@ Runs the automated test suite using the same JFrog Maven configuration:
 ./mvnw -s .mvn/jfrog-settings.xml test
 ```
 
-The test stage is kept separate so that failures are clearly visible in the Jenkins pipeline.
+The test stage is kept separate so failures are clearly visible in Jenkins.
 
-The validated pipeline execution produced:
+A validated pipeline execution produced:
 
 ```text
 Tests run: 79
@@ -412,7 +454,7 @@ Packages the Spring Boot application as an executable JAR:
 ./mvnw -s .mvn/jfrog-settings.xml package -DskipTests
 ```
 
-Tests are skipped during this stage because they have already been executed in the dedicated Test stage.
+Tests are skipped during this invocation because they have already been executed in the dedicated Test stage.
 
 The generated artifact is:
 
@@ -422,59 +464,166 @@ target/spring-petclinic-4.0.0-SNAPSHOT.jar
 
 ## 5. Docker Build
 
-The final pipeline stage builds the runnable Docker image:
+The Docker Build stage creates the runnable application image:
 
 ```bash
 docker build -t spring-petclinic:assignment .
 ```
 
-The resulting image is:
+The resulting local image is:
 
 ```text
 spring-petclinic:assignment
 ```
 
----
+At this point, the image exists on the Docker engine used by Jenkins but has not yet been published to Artifactory.
 
-# JFrog Cloud Artifactory
+## 6. Docker Push
 
-JFrog Cloud Artifactory is used as the repository manager for Maven dependencies.
+After successfully building the image, Jenkins publishes it to the `docker-local` repository in JFrog Cloud Artifactory.
 
-The required dependency flow is:
+The publishing flow is:
 
 ```text
 Jenkins
    |
    v
-Maven
+Docker Build
    |
    v
-maven-virtual
+spring-petclinic:assignment
    |
    v
-maven-central-remote
+Docker Login
    |
    v
-Maven Central
+Docker Tag
+   |
+   v
+Docker Push
+   |
+   v
+JFrog Cloud Artifactory
+   |
+   v
+docker-local
+   |
+   v
+spring-petclinic:assignment
 ```
 
-## Repository Architecture
+### Docker Authentication
+
+The existing Jenkins credential:
+
+```text
+jfrog-credentials
+```
+
+provides:
+
+```text
+JFROG_USERNAME
+JFROG_TOKEN
+```
+
+The pipeline authenticates the Docker client without hardcoding the JFrog access token in source control.
+
+Conceptually:
+
+```bash
+echo "$JFROG_TOKEN" | docker login <JFROG_REGISTRY> \
+    -u "$JFROG_USERNAME" \
+    --password-stdin
+```
+
+### Docker Image Tagging
+
+The locally built image:
+
+```text
+spring-petclinic:assignment
+```
+
+is tagged with its JFrog registry destination:
+
+```text
+petclinictestcicd.jfrog.io/docker-local/spring-petclinic:assignment
+```
+
+Conceptually:
+
+```text
+spring-petclinic:assignment
+           |
+           | docker tag
+           v
+petclinictestcicd.jfrog.io
+           |
+           v
+docker-local
+           |
+           v
+spring-petclinic:assignment
+```
+
+Tagging does not upload or rebuild the image. It creates a registry-qualified reference for the existing Docker image.
+
+### Docker Image Push
+
+The tagged image is published with:
+
+```bash
+docker push \
+  petclinictestcicd.jfrog.io/docker-local/spring-petclinic:assignment
+```
+
+After the push completes, the image is stored in the JFrog Cloud `docker-local` repository.
+
+---
+
+# JFrog Cloud Artifactory
+
+JFrog Cloud Artifactory serves two roles in this implementation:
+
+1. Maven repository manager for application dependencies.
+2. Docker registry for application images produced by Jenkins.
+
+```text
+                     JFrog Cloud Artifactory
+                    /                      \
+                   /                        \
+                  v                          v
+           Maven Repositories          Docker Repository
+                  |                          |
+          maven-virtual                 docker-local
+                  |
+                  v
+       maven-central-remote
+                  |
+                  v
+            Maven Central
+```
+
+---
+
+# Maven Repository Architecture
 
 Two Maven repositories are used in JFrog Cloud.
 
-### Remote Repository
+## Remote Repository
 
 ```text
 maven-central-remote
 ```
 
-This is a remote Maven repository that proxies:
+This remote Maven repository proxies Maven Central:
 
 ```text
 https://repo1.maven.org/maven2/
 ```
 
-When an artifact is not already available from Artifactory's remote cache, Artifactory retrieves it from Maven Central.
+When an artifact is not already available in Artifactory's remote cache, Artifactory retrieves the artifact from Maven Central.
 
 Conceptually:
 
@@ -489,15 +638,15 @@ JFrog Artifactory
 Maven Central
    |
    v
-JFrog remote cache
+JFrog Remote Cache
    |
    v
 Maven
 ```
 
-Future requests for cached artifacts can be served by Artifactory without retrieving the artifact from Maven Central again.
+Future requests for cached artifacts can be served by Artifactory without downloading the same artifact again.
 
-### Virtual Repository
+## Virtual Repository
 
 ```text
 maven-virtual
@@ -509,9 +658,7 @@ The virtual repository contains:
 maven-central-remote
 ```
 
-Maven communicates with the virtual repository rather than directly with the remote repository.
-
-This provides a single repository endpoint to the build:
+Maven communicates with the virtual repository rather than directly with the remote repository:
 
 ```text
 Maven
@@ -523,7 +670,54 @@ maven-virtual
 maven-central-remote
 ```
 
-This architecture also makes it possible to add internal Maven repositories later without changing the repository endpoint used by Maven clients.
+This provides a single repository endpoint to the build and allows additional repositories to be included later without changing Maven's repository endpoint.
+
+---
+
+# Docker Repository Architecture
+
+A local Docker repository is used in JFrog Cloud:
+
+```text
+docker-local
+```
+
+Unlike `maven-central-remote`, which proxies an external Maven repository, `docker-local` stores Docker images produced internally by the CI pipeline.
+
+The two repository flows therefore operate in opposite directions.
+
+## Maven
+
+```text
+Maven Central
+      |
+      v
+maven-central-remote
+      |
+      v
+maven-virtual
+      |
+      v
+Jenkins
+```
+
+## Docker
+
+```text
+Jenkins
+      |
+      v
+Docker Build
+      |
+      v
+Docker Push
+      |
+      v
+docker-local
+      |
+      v
+JFrog Artifactory
+```
 
 ---
 
@@ -558,7 +752,7 @@ The important configuration is:
 <mirrorOf>*</mirrorOf>
 ```
 
-This instructs Maven to route repository requests through the JFrog mirror rather than using repository definitions such as Maven Central directly.
+This instructs Maven to use the JFrog mirror for matching Maven repository requests instead of accessing repositories such as Maven Central directly.
 
 The corresponding Maven server configuration uses environment variables:
 
@@ -578,7 +772,7 @@ No JFrog username, password, or access token is committed to the repository.
 
 JFrog authentication is managed through Jenkins Credentials.
 
-The Jenkins credential ID used by the pipeline is:
+The Jenkins credential ID used by the Cloud pipeline is:
 
 ```text
 jfrog-credentials
@@ -591,9 +785,9 @@ Username: JFrog username
 Password: JFrog access token
 ```
 
-The pipeline injects these values only around Maven operations.
+The pipeline injects the credentials only when Artifactory authentication is required.
 
-Conceptually:
+For Maven:
 
 ```groovy
 withCredentials([
@@ -607,7 +801,7 @@ withCredentials([
 }
 ```
 
-Jenkins masks the token in console output.
+The same Jenkins-managed credentials can be used for authenticated Docker operations when the JFrog identity has the required repository permissions.
 
 The repository must never contain:
 
@@ -620,7 +814,7 @@ GitHub private keys
 
 ---
 
-# Verifying JFrog Dependency Resolution
+# Verifying JFrog Maven Dependency Resolution
 
 A successful Maven build alone does not prove that dependencies are being resolved through Artifactory.
 
@@ -636,9 +830,9 @@ Downloaded from jfrog:
 https://petclinictestcicd.jfrog.io/artifactory/maven-virtual/...
 ```
 
-This verifies that Maven is using the configured JFrog virtual repository.
+This verifies that Maven uses the configured JFrog virtual repository.
 
-The effective dependency flow is therefore:
+The effective dependency flow is:
 
 ```text
 Jenkins
@@ -665,7 +859,7 @@ There are two relevant cache layers:
 Jenkins
    |
    v
-Maven local repository (~/.m2)
+Maven Local Repository (~/.m2)
    |
    | local cache miss
    v
@@ -681,6 +875,61 @@ If an artifact is already present in Maven's local repository, Maven may not nee
 If Maven needs an artifact that is not locally available, the configured JFrog mirror is used.
 
 Artifactory can then either serve the artifact from its remote cache or retrieve it from Maven Central.
+
+---
+
+# Verifying JFrog Docker Publishing
+
+Docker publishing was validated manually before being automated through Jenkins.
+
+The image was first built locally:
+
+```text
+spring-petclinic:assignment
+```
+
+It was then tagged for JFrog:
+
+```text
+petclinictestcicd.jfrog.io/docker-local/spring-petclinic:assignment
+```
+
+The image was successfully pushed to JFrog Cloud.
+
+The successful push returned the following image digest:
+
+```text
+sha256:339cfda88c079c845c542d9c713348fd664d1ac5a2918b04a3dc684eafb38e4c
+```
+
+A subsequent Docker pull returned the same digest:
+
+```text
+sha256:339cfda88c079c845c542d9c713348fd664d1ac5a2918b04a3dc684eafb38e4c
+```
+
+The matching digest verifies that the pushed and subsequently referenced image manifest is the same.
+
+The tested flow was:
+
+```text
+Docker Build
+     |
+     v
+Docker Tag
+     |
+     v
+Docker Push
+     |
+     v
+JFrog Cloud docker-local
+     |
+     v
+Docker Pull
+     |
+     v
+spring-petclinic:assignment
+```
 
 ---
 
@@ -770,7 +1019,7 @@ The application is available at:
 http://localhost:8083
 ```
 
-Port `8083` is used on the host because Jenkins uses port `8080` and the local self-hosted Artifactory environment uses ports `8081` and `8082`.
+Port `8083` is used on the host because Jenkins uses port `8080`, while the local self-hosted Artifactory environment uses ports `8081` and `8082`.
 
 ```text
 Host                  Container
@@ -803,7 +1052,7 @@ spring-petclinic-assignment.tar.gz
 
 The image archive is intentionally not stored in Git because it is a generated binary artifact.
 
-The final submitted archive was exported from `spring-petclinic:assignment` and has the following SHA-256 checksum:
+The submitted archive has the following SHA-256 checksum:
 
 ```text
 401f2c40fc07f48c647c9f07c375de178b0bdee85c12c4339b57dd66a2c18731
@@ -835,8 +1084,8 @@ docker images spring-petclinic
 The image should appear with:
 
 ```text
-REPOSITORY             TAG
-spring-petclinic       assignment
+REPOSITORY          TAG
+spring-petclinic    assignment
 ```
 
 ## Run the Submitted Image
@@ -859,9 +1108,9 @@ curl -I http://localhost:8083
 
 ---
 
-# Verification
+# Cloud Pipeline Verification
 
-The complete required CI/CD flow has been validated:
+The required Cloud CI/CD flow has been validated across the build stages and JFrog integrations:
 
 ```text
 GitHub
@@ -890,16 +1139,22 @@ Docker Build
 spring-petclinic:assignment
    |
    v
-Docker Container
+Docker Push
    |
    v
-HTTP 200
+JFrog Cloud docker-local
 ```
 
-The Maven logs also verify dependency resolution through:
+Maven logs verified dependency resolution through:
 
 ```text
 https://petclinictestcicd.jfrog.io/artifactory/maven-virtual/
+```
+
+The Docker registry integration was independently validated with a successful push and pull of:
+
+```text
+petclinictestcicd.jfrog.io/docker-local/spring-petclinic:assignment
 ```
 
 The application Docker image was successfully started and returned:
@@ -907,8 +1162,6 @@ The application Docker image was successfully started and returned:
 ```text
 HTTP/1.1 200
 ```
-
-This verifies that the Docker image produced by the CI process is runnable.
 
 ---
 
@@ -920,7 +1173,7 @@ This assignment uses a local Jenkins environment designed to keep the setup simp
 
 Secrets are not committed to Git.
 
-JFrog credentials are stored using Jenkins Credentials and injected into Maven operations only when required.
+JFrog credentials are stored using Jenkins Credentials and injected into Maven and Docker operations only when required.
 
 The access token is masked by Jenkins in console output.
 
@@ -934,9 +1187,9 @@ For this local environment, Jenkins runs as `root` and has access to:
 
 Mounting the Docker socket gives the Jenkins container significant control over the host Docker daemon.
 
-This approach was intentionally chosen for the local assignment environment so Jenkins can build Docker images without introducing additional infrastructure.
+This approach was intentionally chosen for the local assignment environment so Jenkins can build and publish Docker images without introducing additional infrastructure.
 
-For a production environment, I would instead use dedicated Jenkins build agents with controlled permissions and an appropriately secured container build strategy rather than exposing the host Docker socket directly to the Jenkins controller.
+For a production environment, dedicated Jenkins build agents with controlled permissions and an appropriately secured container build strategy should be used instead of exposing the host Docker socket directly to the Jenkins controller.
 
 ## GitHub
 
@@ -946,25 +1199,94 @@ Developer write access is handled separately using SSH.
 
 ---
 
-# Bonus – Self-Hosted JFrog Artifactory
+# Bonus - Self-Hosted JFrog Artifactory
 
-The optional self-hosted Artifactory bonus has also been completed and validated end to end.
+The optional self-hosted Artifactory bonus demonstrates the CI workflow using a locally deployed Artifactory instance instead of the JFrog Cloud service.
 
-JFrog Artifactory OSS 7.161.15 is deployed locally with PostgreSQL using JFrog's Docker Compose distribution. The self-hosted implementation is intentionally isolated from the required JFrog Cloud pipeline so the primary solution remains independently functional.
+JFrog Artifactory OSS 7.161.15 runs locally with PostgreSQL.
+
+The self-hosted implementation is intentionally isolated from the required JFrog Cloud pipeline so the primary solution remains independently functional.
+
+## Self-Hosted Environment
+
+The local environment contains:
+
+```text
+Docker Host
+│
+├── Jenkins
+│   ├── 8080
+│   └── 50000
+│
+├── JFrog Artifactory OSS
+│   ├── 8081
+│   └── 8082
+│
+└── PostgreSQL
+    └── 5432
+```
+
+Artifactory runtime data is persisted outside the container.
+
+In the local development environment the Artifactory data directory is bind-mounted into:
+
+```text
+/var/opt/jfrog/artifactory
+```
+
+inside the Artifactory container.
 
 ## Bonus Architecture
 
+The self-hosted environment uses Artifactory for both Maven dependencies and Docker images:
+
 ```text
-GitHub
-   |
-   v
+                         GitHub
+                            |
+                            v
+                         Jenkins
+                            |
+                  +---------+---------+
+                  |                   |
+                  v                   v
+                Maven            Docker Build
+                  |                   |
+                  v                   v
+           maven-virtual     spring-petclinic:selfhosted
+                  |                   |
+                  v                   | docker push
+      maven-central-remote            v
+                  |              docker-local
+                  v                   |
+            Maven Central             v
+                              Self-Hosted Artifactory
+```
+
+---
+
+# Self-Hosted Maven Repository Configuration
+
+The self-hosted Artifactory contains the Maven repositories:
+
+```text
+maven-central-remote
+maven-virtual
+```
+
+`maven-central-remote` proxies Maven Central.
+
+`maven-virtual` provides Maven with a single repository endpoint and contains the remote repository.
+
+The dependency flow is:
+
+```text
 Jenkins
    |
    v
 Maven Wrapper
    |
    v
-Self-Hosted JFrog Artifactory
+Self-Hosted Artifactory
    |
    v
 maven-virtual
@@ -976,20 +1298,13 @@ maven-central-remote
 Maven Central
 ```
 
-## Self-Hosted Repository Configuration
-
-The Artifactory instance exposes port `8082` and contains two Maven repositories:
-
-- `maven-central-remote` — remote repository proxying Maven Central at `https://repo1.maven.org/maven2/`.
-- `maven-virtual` — virtual repository containing `maven-central-remote` and providing a single endpoint to Maven clients.
-
-The self-hosted Maven configuration is stored separately from the Cloud configuration:
+The self-hosted Maven configuration is stored separately:
 
 ```text
 .mvn/jfrog-selfhosted-settings.xml
 ```
 
-Its mirror uses runtime environment variables rather than committed credentials or host-specific configuration:
+Its configuration uses runtime environment variables:
 
 ```xml
 <server>
@@ -997,7 +1312,11 @@ Its mirror uses runtime environment variables rather than committed credentials 
     <username>${env.ARTIFACTORY_USERNAME}</username>
     <password>${env.ARTIFACTORY_PASSWORD}</password>
 </server>
+```
 
+and:
+
+```xml
 <mirror>
     <id>jfrog-selfhosted</id>
     <name>Self-hosted JFrog Artifactory</name>
@@ -1006,7 +1325,11 @@ Its mirror uses runtime environment variables rather than committed credentials 
 </mirror>
 ```
 
-## Self-Hosted Jenkins Pipeline
+Credentials and environment-specific addresses are therefore kept outside source control.
+
+---
+
+# Self-Hosted Jenkins Pipeline
 
 The bonus uses a separate pipeline definition:
 
@@ -1026,21 +1349,146 @@ Branch:      */main
 Script Path: Jenkinsfile.selfhosted
 ```
 
-The bonus pipeline executes the same application lifecycle while using the self-hosted repository manager:
+The self-hosted pipeline follows:
 
 ```text
-Checkout -> Compile -> Test -> Package -> Docker Build
+Checkout
+   |
+   v
+Compile
+   |
+   v
+Test
+   |
+   v
+Package
+   |
+   v
+Docker Build
+   |
+   v
+Docker Push
 ```
 
-The resulting bonus image is tagged:
+The resulting Docker image is tagged:
 
 ```text
 spring-petclinic:selfhosted
 ```
 
-## Jenkins Credentials for Self-Hosted Artifactory
+---
 
-The self-hosted pipeline uses two Jenkins credentials:
+# Docker Image Publishing to Self-Hosted Artifactory
+
+The self-hosted implementation also uses a local Docker repository:
+
+```text
+docker-local
+```
+
+The image publishing flow is:
+
+```text
+Jenkins
+   |
+   v
+Docker Build
+   |
+   v
+spring-petclinic:selfhosted
+   |
+   v
+Docker Login
+   |
+   v
+Docker Tag
+   |
+   v
+Docker Push
+   |
+   v
+Self-Hosted JFrog Artifactory
+   |
+   v
+docker-local
+   |
+   v
+spring-petclinic:selfhosted
+```
+
+## Build
+
+Jenkins builds the image:
+
+```bash
+docker build -t spring-petclinic:selfhosted .
+```
+
+## Authentication
+
+Jenkins retrieves the Artifactory username and password from Jenkins Credentials.
+
+```text
+jfrog-selfhosted-credentials
+     |
+     +--> ARTIFACTORY_USERNAME
+     |
+     +--> ARTIFACTORY_PASSWORD
+```
+
+No Artifactory password or access token is stored in the repository.
+
+## Tag
+
+The image is tagged with the self-hosted Artifactory Docker destination:
+
+```text
+spring-petclinic:selfhosted
+             |
+             | docker tag
+             v
+Self-Hosted Artifactory
+             |
+             v
+docker-local/spring-petclinic:selfhosted
+```
+
+## Push
+
+The Docker client then publishes the image:
+
+```text
+Docker Engine
+      |
+      | docker push
+      v
+Self-Hosted Artifactory
+      |
+      v
+docker-local
+      |
+      v
+spring-petclinic:selfhosted
+```
+
+The self-hosted Artifactory therefore performs two separate roles:
+
+```text
+              SELF-HOSTED ARTIFACTORY
+                 /            \
+                /              \
+               v                ^
+         Maven Dependencies   Docker Images
+               |                |
+               v                |
+             Jenkins -----------+
+```
+
+---
+
+# Jenkins Credentials for Self-Hosted Artifactory
+
+The self-hosted pipeline uses Jenkins-managed configuration:
 
 ```text
 jfrog-selfhosted-credentials
@@ -1051,38 +1499,89 @@ jfrog-selfhosted-url
     -> ARTIFACTORY_URL
 ```
 
-The Artifactory URL is injected at runtime instead of being hard-coded in `Jenkinsfile.selfhosted`. This keeps environment-specific configuration outside source control and avoids triggering Spring PetClinic's NoHttp Checkstyle rule for the local HTTP endpoint.
+The Artifactory endpoint is injected at runtime instead of being hard-coded in `Jenkinsfile.selfhosted`.
 
-For this local Docker Desktop environment, Jenkins reaches Artifactory through `host.docker.internal` on port `8082`. The complete Artifactory endpoint is stored in the Jenkins `jfrog-selfhosted-url` credential and injected into the pipeline as `ARTIFACTORY_URL`.
+For the local Docker Desktop environment, Jenkins reaches services exposed by the host through:
 
-`host.docker.internal` is required because Jenkins runs inside a container; `localhost` inside that container would refer to Jenkins itself rather than the Artifactory service exposed by the host.
+```text
+host.docker.internal
+```
 
-## Bonus Verification
+This is required because Jenkins runs inside a Docker container. `localhost` inside the Jenkins container refers to the Jenkins container itself, not services exposed by the host.
 
-Connectivity from the Jenkins container to Artifactory was verified before executing the full pipeline. Maven output then confirmed dependency resolution through the self-hosted virtual repository with entries such as:
+---
+
+# Self-Hosted Verification
+
+Connectivity from the Jenkins container to Artifactory is verified before relying on the complete pipeline.
+
+Maven output can be used to confirm dependency resolution through the self-hosted virtual repository with entries such as:
 
 ```text
 Downloading from jfrog-selfhosted:
 <self-hosted-artifactory>/artifactory/maven-virtual/...
 ```
 
-The complete self-hosted Jenkins pipeline was successfully executed:
+The complete target pipeline is:
 
 ```text
-Checkout       PASS
-Compile        PASS
-Test           PASS
-Package        PASS
-Docker Build   PASS
+Checkout
+   |
+   v
+Compile
+   |
+   v
+Test
+   |
+   v
+Package
+   |
+   v
+Docker Build
+   |
+   v
+Docker Push
+   |
+   v
+Self-Hosted Artifactory
 ```
 
-This demonstrates that the application build can switch between JFrog Cloud and self-hosted Artifactory without redesigning the pipeline. The Maven settings, Jenkins credentials, and repository endpoint are the primary configuration differences.
+After a successful Docker Push stage, the resulting image is stored under:
 
-## Self-Hosted Production Considerations
+```text
+docker-local/spring-petclinic:selfhosted
+```
 
-The self-hosted deployment is intentionally a local demonstration. For a production deployment I would additionally use TLS/HTTPS, a dedicated least-privilege service identity or access token instead of an administrator account, managed persistent storage and PostgreSQL backups, monitoring and health checks, and an appropriate high-availability/disaster-recovery strategy.
+This demonstrates the ability to switch between JFrog Cloud and self-hosted Artifactory while keeping the application build lifecycle consistent.
 
-The Artifactory Docker Compose distribution, database credentials, runtime data, and generated environment files are intentionally not committed to this repository.
+The primary differences are:
+
+```text
+Repository endpoints
+Maven settings
+Jenkins credentials
+Docker registry destination
+```
+
+---
+
+# Self-Hosted Production Considerations
+
+The self-hosted deployment is intentionally a local demonstration.
+
+For a production deployment, additional controls should include:
+
+- TLS/HTTPS.
+- Dedicated least-privilege service identities or access tokens.
+- Managed persistent storage.
+- PostgreSQL backups.
+- Artifactory data backups.
+- Monitoring and health checks.
+- Controlled Jenkins build agents.
+- Docker registry access controls.
+- High-availability and disaster-recovery planning.
+
+The Artifactory runtime data, database credentials, generated configuration, and secrets are intentionally not committed to this repository.
 
 ---
 
@@ -1091,17 +1590,66 @@ The Artifactory Docker Compose distribution, database credentials, runtime data,
 | Requirement | Implementation |
 |---|---|
 | Spring PetClinic source | Official Spring PetClinic project |
-| Jenkins pipeline | `Jenkinsfile` |
+| Jenkins Cloud pipeline | `Jenkinsfile` |
 | Compile code | Maven `compile` stage |
 | Run tests | Maven `test` stage |
 | Package application | Maven `package` stage |
 | Runnable Docker image | `spring-petclinic:assignment` |
 | Dependencies through JFrog Cloud | `maven-virtual` Maven mirror |
+| Maven Central proxy | `maven-central-remote` |
+| JFrog Cloud Docker repository | `docker-local` |
+| Cloud Docker publishing | `spring-petclinic:assignment` pushed to JFrog Cloud |
 | Secure JFrog authentication | Jenkins Credentials |
 | Dockerfile | Root `Dockerfile` |
 | Documentation | `README.md` |
 | Runnable image deliverable | `spring-petclinic-assignment.tar.gz` |
-| Self-hosted Artifactory | Completed optional bonus using Artifactory OSS 7.161.15 + PostgreSQL |
+| Self-hosted pipeline | `Jenkinsfile.selfhosted` |
+| Self-hosted Artifactory | Artifactory OSS 7.161.15 with PostgreSQL |
+| Self-hosted Maven resolution | Self-hosted `maven-virtual` |
+| Self-hosted Docker repository | `docker-local` |
+| Self-hosted Docker publishing | `spring-petclinic:selfhosted` published to self-hosted Artifactory |
+
+---
+
+# Final Architecture Summary
+
+The project demonstrates the same CI/CD pattern using both JFrog Cloud and a self-hosted Artifactory instance.
+
+## JFrog Cloud
+
+```text
+                       JFrog Cloud
+                       /         \
+                      v           ^
+              Maven Dependencies  |
+                      |       Docker Image
+                      v           |
+                    Jenkins ------+
+```
+
+## Self-Hosted Artifactory
+
+```text
+                  Self-Hosted Artifactory
+                       /         \
+                      v           ^
+              Maven Dependencies  |
+                      |       Docker Image
+                      v           |
+                    Jenkins ------+
+```
+
+In both implementations:
+
+```text
+Dependencies:
+Maven Central -> Artifactory -> Maven -> Jenkins
+
+Application artifact:
+Jenkins -> Docker Build -> Docker Push -> Artifactory
+```
+
+This provides centralized dependency management and centralized storage of the Docker application artifact while keeping credentials outside the source repository.
 
 ---
 

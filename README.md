@@ -82,8 +82,10 @@ The main files related to the CI/CD implementation are:
 ```text
 .
 ├── .mvn/
-│   └── jfrog-settings.xml
+│   ├── jfrog-settings.xml
+│   └── jfrog-selfhosted-settings.xml
 ├── Jenkinsfile
+├── Jenkinsfile.selfhosted
 ├── Dockerfile
 ├── jenkins/
 │   └── Dockerfile
@@ -94,11 +96,15 @@ The main files related to the CI/CD implementation are:
 └── src/
 ```
 
-`Jenkinsfile` defines the CI pipeline.
+`Jenkinsfile` defines the required JFrog Cloud CI pipeline.
+
+`Jenkinsfile.selfhosted` defines the optional self-hosted Artifactory bonus pipeline.
 
 The root `Dockerfile` defines the Spring PetClinic runtime image.
 
-`.mvn/jfrog-settings.xml` configures Maven dependency resolution through JFrog Artifactory.
+`.mvn/jfrog-settings.xml` configures Maven dependency resolution through JFrog Cloud Artifactory.
+
+`.mvn/jfrog-selfhosted-settings.xml` configures the separate self-hosted Artifactory bonus path.
 
 `jenkins/Dockerfile` defines the custom Jenkins environment used for this assignment.
 
@@ -333,7 +339,9 @@ This keeps developer authentication separate from Jenkins source-code checkout.
 
 # Jenkins Pipeline
 
-The `Jenkinsfile` defines the CI pipeline.
+The `Jenkinsfile` defines the required JFrog Cloud CI pipeline.
+
+`Jenkinsfile.selfhosted` defines the optional self-hosted Artifactory bonus pipeline.
 
 The pipeline contains the following stages:
 
@@ -934,11 +942,11 @@ Developer write access is handled separately using SSH.
 
 # Bonus – Self-Hosted JFrog Artifactory
 
-The required JFrog Cloud implementation is complete.
+The optional self-hosted Artifactory bonus has also been completed and validated end to end.
 
-As an additional part of the assignment, a self-hosted JFrog Artifactory environment will be deployed to demonstrate the same dependency-resolution architecture using a locally managed Artifactory instance.
+JFrog Artifactory OSS 7.161.15 is deployed locally with PostgreSQL using JFrog's Docker Compose distribution. The self-hosted implementation is intentionally isolated from the required JFrog Cloud pipeline so the primary solution remains independently functional.
 
-The target bonus architecture is:
+## Bonus Architecture
 
 ```text
 GitHub
@@ -947,20 +955,132 @@ GitHub
 Jenkins
    |
    v
-Maven
+Maven Wrapper
    |
    v
 Self-Hosted JFrog Artifactory
    |
    v
+maven-virtual
+   |
+   v
+maven-central-remote
+   |
+   v
 Maven Central
 ```
 
-The self-hosted configuration is intentionally kept separate from the primary JFrog Cloud implementation.
+## Self-Hosted Repository Configuration
 
-This allows the required Cloud-based pipeline to remain functional while demonstrating how the repository-manager endpoint can be replaced with a self-hosted Artifactory instance without redesigning the entire CI pipeline.
+The Artifactory instance exposes port `8082` and contains two Maven repositories:
 
-> **Status:** The required JFrog Cloud implementation is complete. Self-hosted Artifactory is implemented separately as the optional bonus.
+- `maven-central-remote` — remote repository proxying Maven Central at `https://repo1.maven.org/maven2/`.
+- `maven-virtual` — virtual repository containing `maven-central-remote` and providing a single endpoint to Maven clients.
+
+The self-hosted Maven configuration is stored separately from the Cloud configuration:
+
+```text
+.mvn/jfrog-selfhosted-settings.xml
+```
+
+Its mirror uses runtime environment variables rather than committed credentials or host-specific configuration:
+
+```xml
+<server>
+    <id>jfrog-selfhosted</id>
+    <username>${env.ARTIFACTORY_USERNAME}</username>
+    <password>${env.ARTIFACTORY_PASSWORD}</password>
+</server>
+
+<mirror>
+<id>jfrog-selfhosted</id>
+<name>Self-hosted JFrog Artifactory</name>
+<url>${env.ARTIFACTORY_URL}/artifactory/maven-virtual/</url>
+<mirrorOf>*</mirrorOf>
+</mirror>
+```
+
+## Self-Hosted Jenkins Pipeline
+
+The bonus uses a separate pipeline definition:
+
+```text
+Jenkinsfile.selfhosted
+```
+
+The Jenkins job can be configured with:
+
+```text
+Job name:    spring-petclinic-selfhosted
+Definition:  Pipeline script from SCM
+SCM:         Git
+Repository:  https://github.com/issambenameur85-wq/spring-petclinic-jfrog-cicd.git
+Credentials: None
+Branch:      */main
+Script Path: Jenkinsfile.selfhosted
+```
+
+The bonus pipeline executes the same application lifecycle while using the self-hosted repository manager:
+
+```text
+Checkout -> Compile -> Test -> Package -> Docker Build
+```
+
+The resulting bonus image is tagged:
+
+```text
+spring-petclinic:selfhosted
+```
+
+## Jenkins Credentials for Self-Hosted Artifactory
+
+The self-hosted pipeline uses two Jenkins credentials:
+
+```text
+jfrog-selfhosted-credentials
+    -> ARTIFACTORY_USERNAME
+    -> ARTIFACTORY_PASSWORD
+
+jfrog-selfhosted-url
+    -> ARTIFACTORY_URL
+```
+
+The Artifactory URL is injected at runtime instead of being hard-coded in `Jenkinsfile.selfhosted`. This keeps environment-specific configuration outside source control and avoids triggering Spring PetClinic's NoHttp Checkstyle rule for the local HTTP endpoint.
+
+For this local Docker Desktop environment, the injected URL is:
+
+```text
+http://host.docker.internal:8082
+```
+
+`host.docker.internal` is required because Jenkins runs inside a container; `localhost` inside that container would refer to Jenkins itself rather than the Artifactory service exposed by the host.
+
+## Bonus Verification
+
+Connectivity from the Jenkins container to Artifactory was verified before executing the full pipeline. Maven output then confirmed dependency resolution through the self-hosted virtual repository with entries such as:
+
+```text
+Downloading from jfrog-selfhosted:
+http://host.docker.internal:8082/artifactory/maven-virtual/...
+```
+
+The complete self-hosted Jenkins pipeline was successfully executed:
+
+```text
+Checkout       PASS
+Compile        PASS
+Test           PASS
+Package        PASS
+Docker Build   PASS
+```
+
+This demonstrates that the application build can switch between JFrog Cloud and self-hosted Artifactory without redesigning the pipeline. The Maven settings, Jenkins credentials, and repository endpoint are the primary configuration differences.
+
+## Self-Hosted Production Considerations
+
+The self-hosted deployment is intentionally a local demonstration. For a production deployment I would additionally use TLS/HTTPS, a dedicated least-privilege service identity or access token instead of an administrator account, managed persistent storage and PostgreSQL backups, monitoring and health checks, and an appropriate high-availability/disaster-recovery strategy.
+
+The Artifactory Docker Compose distribution, database credentials, runtime data, and generated environment files are intentionally not committed to this repository.
 
 ---
 
@@ -979,7 +1099,7 @@ This allows the required Cloud-based pipeline to remain functional while demonst
 | Dockerfile | Root `Dockerfile` |
 | Documentation | `README.md` |
 | Runnable image deliverable | `spring-petclinic-assignment.tar.gz` |
-| Self-hosted Artifactory | Optional bonus |
+| Self-hosted Artifactory | Completed optional bonus using Artifactory OSS 7.161.15 + PostgreSQL |
 
 ---
 

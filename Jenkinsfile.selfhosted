@@ -1,0 +1,67 @@
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        ARTIFACTORY_URL = 'http://host.docker.internal:8082'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Compile') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'jfrog-selfhosted-credentials',
+                        usernameVariable: 'ARTIFACTORY_USERNAME',
+                        passwordVariable: 'ARTIFACTORY_PASSWORD'
+                    )
+                ]) {
+                    sh './mvnw -s .mvn/jfrog-selfhosted-settings.xml compile'
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'jfrog-selfhosted-credentials',
+                        usernameVariable: 'ARTIFACTORY_USERNAME',
+                        passwordVariable: 'ARTIFACTORY_PASSWORD'
+                    )
+                ]) {
+                    sh './mvnw -s .mvn/jfrog-selfhosted-settings.xml test'
+                }
+            }
+        }
+
+        stage('Package') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'jfrog-selfhosted-credentials',
+                        usernameVariable: 'ARTIFACTORY_USERNAME',
+                        passwordVariable: 'ARTIFACTORY_PASSWORD'
+                    )
+                ]) {
+                    sh './mvnw -s .mvn/jfrog-selfhosted-settings.xml package -DskipTests'
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                sh 'docker build -t spring-petclinic:selfhosted .'
+            }
+        }
+    }
+}

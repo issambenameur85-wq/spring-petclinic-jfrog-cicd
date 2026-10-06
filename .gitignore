@@ -47,3 +47,7 @@ _site/
 *.css
 !petclinic.css
 spring-petclinic-assignment.tar.gz
+
+# Local JFrog Artifactory bonus runtime/installer files
+bonus/artifactory-oss-*/
+bonus/jfrog-artifactory-*-compose.tar.gz

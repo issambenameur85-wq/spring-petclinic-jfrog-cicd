@@ -761,28 +761,28 @@ The application listens on port `8080` inside the container.
 If the image has already been built:
 
 ```bash
-docker run --rm -p 8081:8080 spring-petclinic:assignment
+docker run --rm -p 8083:8080 spring-petclinic:assignment
 ```
 
 The application is available at:
 
 ```text
-http://localhost:8081
+http://localhost:8083
 ```
 
-Port `8081` is used on the host because the local Jenkins environment uses port `8080`.
+Port `8083` is used on the host because Jenkins uses port `8080` and the local self-hosted Artifactory environment uses ports `8081` and `8082`.
 
 ```text
 Host                  Container
 
-8081  --------------> 8080
+8083  --------------> 8080
                        Spring PetClinic
 ```
 
 Verify it:
 
 ```bash
-curl -I http://localhost:8081
+curl -I http://localhost:8083
 ```
 
 A successful application startup should return:
@@ -836,19 +836,19 @@ spring-petclinic       assignment
 ## Run the Submitted Image
 
 ```bash
-docker run --rm -p 8081:8080 spring-petclinic:assignment
+docker run --rm -p 8083:8080 spring-petclinic:assignment
 ```
 
 Open:
 
 ```text
-http://localhost:8081
+http://localhost:8083
 ```
 
 or verify from the command line:
 
 ```bash
-curl -I http://localhost:8081
+curl -I http://localhost:8083
 ```
 
 ---
@@ -993,10 +993,10 @@ Its mirror uses runtime environment variables rather than committed credentials 
 </server>
 
 <mirror>
-<id>jfrog-selfhosted</id>
-<name>Self-hosted JFrog Artifactory</name>
-<url>${env.ARTIFACTORY_URL}/artifactory/maven-virtual/</url>
-<mirrorOf>*</mirrorOf>
+    <id>jfrog-selfhosted</id>
+    <name>Self-hosted JFrog Artifactory</name>
+    <url>${env.ARTIFACTORY_URL}/artifactory/maven-virtual/</url>
+    <mirrorOf>*</mirrorOf>
 </mirror>
 ```
 

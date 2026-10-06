@@ -26,17 +26,33 @@ pipeline {
             }
         }
 
-        stage('Test') {
-            steps {
-                sh './mvnw test'
-            }
-        }
+       stage('Test') {
+           steps {
+               withCredentials([
+                   usernamePassword(
+                       credentialsId: 'jfrog-credentials',
+                       usernameVariable: 'JFROG_USERNAME',
+                       passwordVariable: 'JFROG_TOKEN'
+                   )
+               ]) {
+                   sh './mvnw -s .mvn/jfrog-settings.xml test'
+               }
+           }
+       }
 
-        stage('Package') {
-            steps {
-                sh './mvnw package -DskipTests'
-            }
-        }
+       stage('Package') {
+           steps {
+               withCredentials([
+                   usernamePassword(
+                       credentialsId: 'jfrog-credentials',
+                       usernameVariable: 'JFROG_USERNAME',
+                       passwordVariable: 'JFROG_TOKEN'
+                   )
+               ]) {
+                   sh './mvnw -s .mvn/jfrog-settings.xml package -DskipTests'
+               }
+           }
+       }
 
         stage('Docker Build') {
             steps {

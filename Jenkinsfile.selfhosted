@@ -72,32 +72,26 @@ pipeline {
             }
         }
 
-       stage('Docker Push') {
-           steps {
-               withCredentials([
-                   usernamePassword(
-                       credentialsId: 'jfrog-selfhosted-credentials',
-                       usernameVariable: 'ARTIFACTORY_USERNAME',
-                       passwordVariable: 'ARTIFACTORY_PASSWORD'
-                   ),
-                   string(
-                       credentialsId: 'jfrog-selfhosted-docker-registry',
-                       variable: 'DOCKER_REGISTRY'
-                   )
-               ]) {
-                   sh '''
-                       echo "$ARTIFACTORY_PASSWORD" | docker login "$DOCKER_REGISTRY" \
-                           -u "$ARTIFACTORY_USERNAME" \
-                           --password-stdin
-
-                       docker tag spring-petclinic:selfhosted \
-                           "$DOCKER_REGISTRY/docker-local/spring-petclinic:selfhosted"
-
-                       docker push \
-                           "$DOCKER_REGISTRY/docker-local/spring-petclinic:selfhosted"
-                   '''
-               }
-           }
-       }
+        stage('Docker Push') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'jfrog-selfhosted-credentials',
+                        usernameVariable: 'ARTIFACTORY_USERNAME',
+                        passwordVariable: 'ARTIFACTORY_PASSWORD'
+                    ),
+                    string(
+                        credentialsId: 'jfrog-selfhosted-url',
+                        variable: 'ARTIFACTORY_URL'
+                    )
+                ]) {
+                    sh '''
+                        docker login -u $ARTIFACTORY_USERNAME -p $ARTIFACTORY_PASSWORD $ARTIFACTORY_URL
+                        docker tag spring-petclinic:selfhosted $ARTIFACTORY_URL/spring-petclinic:selfhosted
+                        docker push $ARTIFACTORY_URL/spring-petclinic:selfhosted
+                    '''
+                }
+            }
+        }
     }
 }

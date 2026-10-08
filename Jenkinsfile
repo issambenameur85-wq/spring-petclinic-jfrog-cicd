@@ -28,8 +28,11 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    env.LOCAL_IMAGE = "${IMAGE_NAME}:${IMAGE_TAG}"
-                    env.JFROG_IMAGE = "${JFROG_REGISTRY}/${JFROG_DOCKER_REPO}/${IMAGE_NAME}:${IMAGE_TAG}"
+                    env.LOCAL_IMAGE = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+
+                    env.JFROG_IMAGE = "${env.JFROG_REGISTRY}/${env.JFROG_DOCKER_REPO}/${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+
+                    env.JFROG_ASSIGNMENT_IMAGE = "${env.JFROG_REGISTRY}/${env.JFROG_DOCKER_REPO}/${env.IMAGE_NAME}:assignment"
                 }
 
                 echo "Building commit: ${env.IMAGE_TAG}"
@@ -37,10 +40,6 @@ pipeline {
         }
 
         stage('Maven Build & Test') {
-            environment {
-                JFROG_USERNAME = credentials('jfrog-credentials_USR')
-            }
-
             stages {
                 stage('Compile') {
                     steps {
@@ -129,9 +128,13 @@ pipeline {
                                 --password-stdin
 
                         docker tag "$LOCAL_IMAGE" "$JFROG_IMAGE"
-                        docker push "$JFROG_IMAGE"
+                        docker tag "$LOCAL_IMAGE" "$JFROG_ASSIGNMENT_IMAGE"
 
-                        echo "Published image: $JFROG_IMAGE"
+                        docker push "$JFROG_IMAGE"
+                        docker push "$JFROG_ASSIGNMENT_IMAGE"
+
+                        echo "Published: $JFROG_IMAGE"
+                        echo "Published: $JFROG_ASSIGNMENT_IMAGE"
                     '''
                 }
             }
@@ -140,13 +143,13 @@ pipeline {
 
     post {
         success {
-            echo "Pipeline completed successfully."
-            echo "Published image: ${env.JFROG_IMAGE}"
-            echo "Assignment image: ${env.IMAGE_NAME}:assignment"
+            echo 'Pipeline completed successfully.'
+            echo "Versioned image: ${env.JFROG_IMAGE}"
+            echo "Assignment image: ${env.JFROG_ASSIGNMENT_IMAGE}"
         }
 
         failure {
-            echo 'Pipeline failed. Review the stage logs.'
+            echo 'Pipeline failed. Review the Jenkins console output.'
         }
 
         cleanup {

@@ -139,6 +139,78 @@ pipeline {
                 }
             }
         }
+        
+        stage('Export Docker Image') {
+            steps {
+                sh '''
+                    set -eu
+
+                    mkdir -p dist
+
+                    docker save "$IMAGE_NAME:assignment" | \
+                        gzip > dist/spring-petclinic-assignment.tar.gz
+
+                    sha256sum dist/spring-petclinic-assignment.tar.gz \
+                        > dist/spring-petclinic-assignment.tar.gz.sha256
+
+                    cat > dist/RUN-INSTRUCTIONS.txt <<'EOF'
+        Spring PetClinic - Docker Image
+        ===============================
+
+        Prerequisite:
+        Docker must be installed and running.
+
+        1. Extract and load the Docker image:
+
+           gunzip -c spring-petclinic-assignment.tar.gz | docker load
+
+        2. Run the application:
+
+           docker run --rm -p 8083:8080 spring-petclinic:assignment
+
+        3. Open the application:
+
+           http://localhost:8083
+
+        4. Stop the application:
+
+           Press Ctrl+C in the terminal.
+
+        Note:
+        Port 8083 on the host maps to port 8080 inside the container.
+        EOF
+                '''
+
+                archiveArtifacts(
+                    artifacts: 'dist/*',
+                    fingerprint: true,
+                    onlyIfSuccessful: true
+                )
+
+                echo '''
+                ===========================================
+                SPRING PETCLINIC - ASSIGNMENT DELIVERABLE
+                ===========================================
+
+                Download from Jenkins Build > Artifacts:
+
+                spring-petclinic-assignment.tar.gz
+                spring-petclinic-assignment.tar.gz.sha256
+                RUN-INSTRUCTIONS.txt
+
+                LOAD:
+                gunzip -c spring-petclinic-assignment.tar.gz | docker load
+
+                RUN:
+                docker run --rm -p 8083:8080 spring-petclinic:assignment
+
+                URL:
+                http://localhost:8083
+                ===========================================
+                '''
+            }
+        }
+
     }
 
     post {
